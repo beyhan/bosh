@@ -4,16 +4,14 @@ module Bosh::Monitor
     attr_reader :heartbeats_received
     attr_reader :alerts_received
     attr_reader :alerts_processed
-    attr_reader :instance_id_to_instance
 
     attr_accessor :processor
 
     def initialize(event_processor)
       @agent_id_to_agent = { }
-      @instance_id_to_instance = { }
 
+      @deployment_name_to_deployments = { }
       @deployment_name_to_agent_ids = { }
-      @deployment_name_to_instance_ids = { }
 
       @logger = Bhm.logger
       @heartbeats_received = 0
@@ -67,15 +65,20 @@ module Bosh::Monitor
     end
 
     def deployments_count
-      @deployment_name_to_agent_ids.size
+      @deployment_name_to_deployments.size
     end
 
     # Syncs deployments list received from director
     # with HM deployments.
     # @param deployments Array list of deployments returned by director
     def sync_deployments(deployments)
+      deployments.each do |deployment_data|
+        deployment = Deployment.create(deployment_data)
+        @deployment_name_to_deployments[deployment.name] = deployment
+      end
+
       managed = Set.new(deployments.map { |d| d["name"] })
-      all     = Set.new(@deployment_name_to_agent_ids.keys)
+      all     = Set.new(@deployment_name_to_deployments.keys)
 
       (all - managed).each do |stale_deployment|
         @logger.warn("Found stale deployment #{stale_deployment}, removing...")
@@ -89,18 +92,7 @@ module Bosh::Monitor
     end
 
     def sync_instances(deployment, instances_data)
-      managed_instance_ids = @deployment_name_to_instance_ids[deployment] || Set.new
-      instances_with_vms = Set.new
-
-      instances_data.each do |instance_data|
-        if add_instance(deployment, instance_data)
-          instances_with_vms << instance_data['id']
-        end
-      end
-
-      (managed_instance_ids - instances_with_vms).each do |instance_id|
-        remove_instance(instance_id)
-      end
+       @deployment_name_to_deployments[deployment].add_instances(instances_data)
     end
 
     def sync_agents(deployment, instances)
@@ -120,11 +112,9 @@ module Bosh::Monitor
 
     def remove_deployment(name)
       agent_ids = @deployment_name_to_agent_ids[name]
-      instance_ids = @deployment_name_to_instance_ids[name]
+      @deployment_name_to_deployments.delete(name)
 
-      agent_ids.each { |agent_id| @agent_id_to_agent.delete(agent_id) }
-
-      instance_ids.each { |instance_id| @instance_id_to_instance.delete(instance_id) }
+      agent_ids.each { |agent_id| @agent_id_to_agent.delete(agent_id) } if agent_ids
 
       @deployment_name_to_agent_ids.delete(name)
     end
@@ -137,44 +127,12 @@ module Bosh::Monitor
       end
     end
 
-    def remove_instance(instance_id)
-      @logger.info("Removing instance #{instance_id} from all deployments...")
-      @instance_id_to_instance.delete(instance_id)
-      @deployment_name_to_instance_ids.each_pair do |deployment, instances|
-        instances.delete(instance_id)
-      end
-    end
-
     def add_instance(deployment_name, instance_data)
-      instance = Bhm::Instance.create(instance_data)
-
-      unless instance
-        return false
-      end
-
-      unless instance.expects_vm
-        @logger.debug("Instance with no VM expected found: #{instance.id}")
-        return false
-      end
-
-      instance.deployment = deployment_name
-      if @instance_id_to_instance[instance.id].nil?
-        @logger.debug("Discovered instance #{instance_data['id']}")
-        @instance_id_to_instance[instance.id] = instance
-      end
-
-      @deployment_name_to_instance_ids[deployment_name] ||= Set.new
-      @deployment_name_to_instance_ids[deployment_name] << instance.id
-      true
+      @deployment_name_to_deployments[deployment_name].add_instance(instance_data)
     end
 
     def get_instances_for_deployment(deployment_name)
-      instance_ids_for_deployment = @deployment_name_to_instance_ids[deployment_name]
-      selected_instance_ids_to_instances = @instance_id_to_instance.select do |key, _|
-        instance_ids_for_deployment.include?(key)
-      end
-
-      selected_instance_ids_to_instances.values
+      @deployment_name_to_deployments[deployment_name].instances
     end
 
     # Processes VM data from BOSH Director,
@@ -286,9 +244,9 @@ module Bosh::Monitor
       started = Time.now
       count = 0
 
-      @deployment_name_to_instance_ids.each_pair do |_, instance_ids|
-        instance_ids.each do |instance_id|
-          analyze_instance(instance_id)
+      @deployment_name_to_deployments.each_pair do |_, deployment|
+        deployment.instances.each do |instance|
+          analyze_instance(instance)
           count += 1
         end
       end
@@ -297,13 +255,7 @@ module Bosh::Monitor
       count
     end
 
-    def analyze_instance(instance_id)
-      instance = @instance_id_to_instance[instance_id]
-      unless instance
-        @logger.error("Can't analyze instance #{instance_id} as it is missing from instances index, skipping...")
-        return false
-      end
-
+    def analyze_instance(instance)
       unless instance.has_vm?
         ts = Time.now.to_i
         @processor.process(:alert,
@@ -386,6 +338,15 @@ module Bosh::Monitor
     def on_shutdown(agent, message)
       @logger.info("Agent '#{agent.id}' shutting down...")
       remove_agent(agent.id)
+    end
+
+    #TODO do we need these section
+    def instance_id_to_instance
+      instances = []
+      @deployment_name_to_deployments.each_pair do |_, deployment|
+        instances += deployment.instances
+      end
+      instances
     end
 
   end
