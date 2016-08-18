@@ -1,15 +1,14 @@
 module Bosh::Monitor
   class Deployment
 
-    ATTRIBUTES = [:name]
-    ATTRIBUTES.each do |attribute|
-      attr_reader attribute
-    end
+    attr_reader :name
+    attr_reader :agent_id_to_agent
 
     def initialize(instance_data)
       @logger = Bhm.logger
-      @name     = instance_data['name']
+      @name = instance_data['name']
       @instance_id_to_instance = {}
+      @agent_id_to_agent = {}
     end
 
     def self.create(deployment_data)
@@ -27,9 +26,7 @@ module Bosh::Monitor
     end
 
 
-    def add_instance(instance_data)
-      instance = Bhm::Instance.create(instance_data)
-
+    def add_instance(instance)
       unless instance
         return false
       end
@@ -41,16 +38,10 @@ module Bosh::Monitor
 
       instance.deployment = name
       if @instance_id_to_instance[instance.id].nil?
-        @logger.debug("Discovered instance #{instance_data['id']}")
+        @logger.debug("Discovered instance #{instance.id}")
         @instance_id_to_instance[instance.id] = instance
       end
       true
-    end
-
-    def add_instances(instances_data)
-      instances_data.each do |instance_data|
-        add_instance(instance_data)
-      end
     end
 
     def remove_instance(instance_id)
@@ -68,5 +59,58 @@ module Bosh::Monitor
     def instance_ids
       @instance_id_to_instance.keys.to_set
     end
+
+    # Processes VM data from BOSH Director,
+    # extracts relevant agent data, wraps it into Agent object
+    # and adds it to a list of managed agents.
+    def add_agent(instance)
+
+      @logger.info("Adding agent #{instance.agent_id} (#{instance.job}/#{instance.id}) to #{name}...")
+
+      agent_id = instance.agent_id
+
+      if agent_id.nil?
+        @logger.warn("No agent id for Instance: #{instance.inspect}")
+        return false
+      end
+
+      # Idle VMs, we don't care about them, but we still want to track them
+      if instance.job.nil?
+        @logger.debug("VM with no job found: #{agent_id}")
+      end
+
+      agent = @agent_id_to_agent[agent_id]
+
+      if agent.nil?
+        @logger.debug("Discovered agent #{agent_id}")
+        agent = Agent.new(agent_id)
+        @agent_id_to_agent[agent_id] = agent
+      end
+
+      agent.deployment = name
+      agent.job = instance.job
+      agent.index = instance.index
+      agent.cid = instance.cid
+      agent.instance_id = instance.id
+
+      true
+    end
+
+    def remove_agent(agent_id)
+      @agent_id_to_agent.delete(agent_id)
+    end
+
+    def agent(agent_id)
+      @agent_id_to_agent[agent_id]
+    end
+
+    def agents
+      @agent_id_to_agent.values
+    end
+
+    def agent_ids
+      @agent_id_to_agent.keys.to_set
+    end
+
   end
 end
