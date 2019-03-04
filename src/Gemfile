@@ -7,6 +7,7 @@ gem 'bosh-monitor', path: 'bosh-monitor'
 gem 'bosh-registry', path: 'bosh-registry'
 gem 'bosh-template', path: 'bosh-template'
 gem 'bosh_common', path: 'bosh_common'
+gem 'elastic-apm'
 
 gem 'rake', '~>10.0'
 

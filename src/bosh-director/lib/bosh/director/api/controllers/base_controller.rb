@@ -2,6 +2,7 @@ module Bosh::Director
   module Api
     module Controllers
       class BaseController < Sinatra::Base
+        use ElasticAPM::Middleware
         include ApiHelper
         include Http
 

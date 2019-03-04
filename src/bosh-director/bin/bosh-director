@@ -3,6 +3,7 @@
 require 'bosh/director'
 require 'puma'
 require 'puma/configuration'
+require 'elastic-apm'
 
 config_file = nil
 
@@ -37,8 +38,15 @@ puma_configuration = Puma::Configuration.new do |user_config|
   # this makes sure that all puma workers get their own db connections
   user_config.before_fork { Bosh::Director::Config.db.disconnect }
 end
+
+ENV['ELASTIC_APM_SERVER_URL']='http://10.0.2.2:8100'
+ENV['ELASTIC_APM_SECRET_TOKEN']=''
+ElasticAPM.start(service_name: 'BoshApmTest')
+
 puma_launcher = Puma::Launcher.new(puma_configuration)
 
 Bosh::Director::Config.logger.info("Listening on port #{config.port}")
 Bosh::Director::Config.log_director_start
 puma_launcher.run
+
+ElasticAPM.stop
