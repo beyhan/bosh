@@ -16,7 +16,7 @@ module Bosh::Monitor
       @heartbeats_received = 0
       @alerts_received = 0
       @alerts_processed = 0
-
+      @err_initiator = 0
       @processor = event_processor
     end
 
@@ -105,6 +105,11 @@ module Bosh::Monitor
     def analyze_agents
       @logger.info('Analyzing agents...')
       started = Time.now
+      @err_initiator += 1
+      if @err_initiator == 4
+        @logger.info('Killing the thread')
+        raise 'Kill'
+      end
       count = analyze_deployment_agents + analyze_unmanaged_agents
       @logger.info("Analyzed #{pluralize(count, 'agent')}, took #{Time.now - started} seconds")
       count
